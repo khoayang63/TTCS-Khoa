@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torchvision.models import resnet50, ResNet50_Weights, resnet101, ResNet101_Weights
 
 class ConvBlock(nn.Module):
     def __init__(self, in_c, out_c, kernel_size=1, stride=1, bn_act=True):
@@ -120,6 +121,47 @@ class Darknet53(nn.Module):
 
 #         return route, pred
 
+class ResNetBackbone(nn.Module):
+    def __init__(self):
+        super().__init__()
+        resnet = resnet50(weights=ResNet50_Weights.DEFAULT)
+
+        # Stem
+        self.conv1 = resnet.conv1
+        self.bn1 = resnet.bn1
+        self.relu = resnet.relu
+        self.maxpool = resnet.maxpool
+
+        # Feature layers
+        self.layer1 = resnet.layer1
+        self.layer2 = resnet.layer2
+        self.layer3 = resnet.layer3
+        self.layer4 = resnet.layer4
+
+        self.reduce1 = nn.Conv2d(512, 256, kernel_size=1)
+        self.reduce2 = nn.Conv2d(1024, 512, kernel_size=1)
+        self.reduce3 = nn.Conv2d(2048, 1024, kernel_size=1)
+
+
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+
+        route1 = self.layer2(x)   # 512
+        route2 = self.layer3(route1)  # 1024
+        route3 = self.layer4(route2)  # 2048
+
+        route1 = self.reduce1(route1)  # → 256
+        route2 = self.reduce2(route2)  # → 512
+        route3 = self.reduce3(route3)  # → 1024
+
+        return route1, route2, route3
+
 class DetectionBlock(nn.Module):
     def __init__(self, in_channels, hidden_channels, num_classes):
         super().__init__()
@@ -159,8 +201,7 @@ class YOLOv3(nn.Module):
     def __init__(self, num_classes):
         super().__init__()
 
-        self.backbone = Darknet53()
-
+        self.backbone = ResNetBackbone()
         # Scale 1 (13x13)
         self.head1 = DetectionBlock(in_channels=1024, hidden_channels=512, num_classes=num_classes)
 
@@ -173,6 +214,13 @@ class YOLOv3(nn.Module):
         self.head3 = DetectionBlock(in_channels=384, hidden_channels=128, num_classes=num_classes)
 
         self.upsample = nn.Upsample(scale_factor=2, mode="nearest")
+
+        self.freeze_backbone()
+
+    def freeze_backbone(self):
+        for name, param in self.backbone.named_parameters():
+            if any(layer in name for layer in ["conv1", "bn1", "layer1", "layer2"]):
+                param.requires_grad = False
 
     def forward(self, x):
         route1, route2, route3 = self.backbone(x)
