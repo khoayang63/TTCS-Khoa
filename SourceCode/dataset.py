@@ -7,33 +7,45 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import config
 import cv2
+from utils import *
 
 # Danh sách class của Pascal VOC
 VOC_CLASSES = config.PASCAL_CLASSES
 
 
 class YOLODataset(Dataset):
-    def __init__(self, img_set, transform=None):
+    def __init__(self, img_sets, transform=None):
         """
         img_set: file txt chứa danh sách image id (ví dụ train.txt / val.txt)
         transform: Albumentations transform
         """
 
         # đọc danh sách image id
-        with open(img_set) as f:
-            image_ids = f.read().splitlines()
+        if isinstance(img_sets, str):
+            img_sets = [img_sets]
 
-        self.transform = transform
-
-        # lưu thông tin ảnh và annotation
         self.im_infos = []
 
-        # parse toàn bộ xml annotation
-        for img_id in image_ids:
-            ann_path = f"./VOC2012/Annotations/{img_id}.xml"
-            self.im_infos.append(self._parse_xml(ann_path))
+        # Đọc và gộp (concatenate) tất cả các image id từ các file txt
+        for img_set in img_sets:
+            image_ids = []
+            # base_dir = VOCdevkit/VOC2012_trainval/
+            base_dir = img_set.split("ImageSets")[0]
+            with open(img_set, 'r') as f:
+                image_ids.extend(f.read().splitlines())
 
+            for img_id in image_ids:
+                #VOCdevkit/VOC2012_trainval/Annotations/12345.xml
+                ann_path = f"{base_dir}Annotations/{img_id}.xml"
+                self.im_infos.append(self._parse_xml(ann_path))
+
+        self.transform = transform
         print(f'Number of image found: {len(self.im_infos)}')
+
+        self.anchors = torch.tensor(config.ANCHORS[0] + config.ANCHORS[1] + config.ANCHORS[2])
+        self.num_anchors_per_scale = 3
+        self.S = config.S
+        self.ignore_iou_thresh = 0.5
 
     def _parse_xml(self, ann_path):
         """
@@ -52,8 +64,10 @@ class YOLODataset(Dataset):
         im_info = {}
 
         # filename ảnh tương ứng với xml
-        im_info['filename'] = os.path.basename(ann_path).replace('.xml', '.jpg')
+        image_dir = ann_path.split("Annotations")[0] + "JPEGImages/"
+        filename = os.path.basename(ann_path).replace('.xml', '.jpg')
 
+        im_info['image_path'] = image_dir + filename 
         detections = []
 
         # duyệt tất cả object trong ảnh
@@ -101,7 +115,7 @@ class YOLODataset(Dataset):
         im_info = self.im_infos[index]
 
         # đường dẫn ảnh
-        img_path = os.path.join('VOC2012/JPEGImages', im_info['filename'])
+        img_path = im_info['image_path']
 
         detections = im_info['detections']
 
@@ -137,7 +151,61 @@ class YOLODataset(Dataset):
         # giữ thông tin difficult (VOC)
         targets['difficult'] = torch.as_tensor([d['difficult'] for d in detections])
 
-        return image, targets, img_path
+        yolo_targets = [
+            torch.zeros((self.num_anchors_per_scale, self.S[i], self.S[i], 6))
+            for i in range(3)
+        ]
+        boxes = targets['bboxes']
+        labels = targets['labels']
+        for box, class_label in zip(boxes, labels):
+
+            x, y, w, h = box
+
+            iou_anchors = iou_width_height(
+                torch.tensor([w, h]),
+                self.anchors
+            )
+
+            anchor_indices = iou_anchors.argsort(descending=True)
+
+            has_anchor = False
+
+            for anchor_idx in anchor_indices:
+
+                scale_idx = anchor_idx // self.num_anchors_per_scale
+                anchor_on_scale = anchor_idx % self.num_anchors_per_scale
+
+                S_scale = self.S[scale_idx]
+                # cell chịu trách nhiệm cho box ở grid space
+                i = int(S_scale * y)
+                j = int(S_scale * x)
+
+                anchor_taken = yolo_targets[scale_idx][anchor_on_scale, i, j, 0]
+
+                if not anchor_taken and not has_anchor:
+
+                    yolo_targets[scale_idx][anchor_on_scale, i, j, 0] = 1
+
+                    x_cell = S_scale * x - j
+                    y_cell = S_scale * y - i
+
+                    w_cell = w * S_scale
+                    h_cell = h * S_scale
+
+                    yolo_targets[scale_idx][anchor_on_scale, i, j, 1:5] = \
+                        torch.tensor([x_cell, y_cell, w_cell, h_cell])
+
+                    yolo_targets[scale_idx][anchor_on_scale, i, j, 5] = class_label
+
+                    has_anchor = True
+
+                elif not anchor_taken and iou_anchors[anchor_idx] > self.ignore_iou_thresh:
+
+                    yolo_targets[scale_idx][anchor_on_scale, i, j, 0] = -1
+
+
+        # return image, targets, img_path
+        return image, tuple(yolo_targets)
 
 
 def draw_yolo_boxes(image, targets, class_names=None, color=(0,255,0), thickness=2):
@@ -221,7 +289,7 @@ def get_train_test_loader():
 
     # train dataset
     train_set = YOLODataset(
-        config.TRAIN_SET_PATH,
+        [config.TRAIN_2012_SET_PATH, config.TRAIN_2007_SET_PATH],
         transform=config.TRAIN_TRANSFORMS
     )
 
@@ -230,7 +298,7 @@ def get_train_test_loader():
         dataset=train_set,
         batch_size=config.BATCH_SIZE,
         shuffle=True,
-        collate_fn=collate_function,
+        # collate_fn=collate_function,
         num_workers=config.NUM_WORKERS,
         drop_last=True,
         pin_memory=config.PIN_MEMORY,
@@ -248,7 +316,7 @@ def get_train_test_loader():
         dataset=test_set,
         batch_size=config.BATCH_SIZE,
         shuffle=False,
-        collate_fn=collate_function,
+        # collate_fn=collate_function,
         num_workers=config.NUM_WORKERS,
         pin_memory=config.PIN_MEMORY
     )
@@ -259,11 +327,10 @@ def get_train_test_loader():
 def main():
 
     # load dataset
-    _, _, train_set, test_set = get_train_test_loader()
+    train_loader, test_loader, train_set, test_set = get_train_test_loader()
 
     # visualize một vài ảnh
-    draw_example(train_set, 20)
-
+    # draw_example(train_set, 20)
 
 if __name__ == "__main__":
     main()
