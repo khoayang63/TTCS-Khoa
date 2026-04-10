@@ -36,7 +36,8 @@ def build_targets(targets, anchors, S, num_anchors_per_scale=3, ignore_iou_thres
 
         boxes = targets[b]['bboxes']
         labels = targets[b]['labels']
-        for box, class_label in zip(boxes, labels):
+        difficult = targets[b]['difficult']
+        for box, class_label, is_difficult in zip(boxes, labels, difficult):
 
             x, y, w, h = box
 
@@ -58,7 +59,11 @@ def build_targets(targets, anchors, S, num_anchors_per_scale=3, ignore_iou_thres
                 # cell chịu trách nhiệm cho box ở grid space
                 i = int(S_scale * y)
                 j = int(S_scale * x)
-
+                if is_difficult == 1:
+                    if iou_anchors[anchor_idx] > ignore_iou_thresh:
+                        yolo_targets[scale_idx][anchor_on_scale, i, j, 0] = -1
+                    continue
+                
                 anchor_taken = yolo_targets[scale_idx][b, anchor_on_scale, i, j, 0]
 
                 if not anchor_taken and not has_anchor:
