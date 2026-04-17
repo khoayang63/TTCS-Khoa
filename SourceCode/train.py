@@ -192,6 +192,25 @@ def eval_fn(
         mean_class,
     )
 
+def print_simple_table(metrics):
+    header = f"{'Class':<10} | {'Precision':<10} | {'Recall':<10} | {'F1':<10}"
+    separator = "-" * len(header)
+    
+    print(f"\n[ SUMMARY METRICS ]")
+    print(f"mAP: {metrics['map']:.4f}")
+    print(separator)
+    print(header)
+    print(separator)
+    
+    for class_id, m in metrics['per_class_metric'].items():
+        print(f"{config.PASCAL_CLASSES[class_id]:<10} | {m['precision']:<10.4f} | {m['recall']:<10.4f} | {m['f1']:<10.4f}")
+        
+    print(separator)
+    o = metrics['overall']
+    print(f"{'OVERALL':<10} | {o['precision']:<10.4f} | {o['recall']:<10.4f} | {o['f1']:<10.4f}")
+    print(separator)
+
+
 def main():
     model = YOLOv3(num_classes=config.NUM_CLASSES).to(config.DEVICE)
     total_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)  
@@ -226,54 +245,64 @@ def main():
             scaler
         )
 
-    print(f"Starting from epoch {start_epoch}")
+
+    all_pred_boxes, all_true_boxes = get_evaluation_bboxes(
+        test_loader, model, iou_threshold=config.IOU_THRESH, anchors=config.ANCHORS, threshold=config.MAP_CONF_THRESH
+    )
+    print(f"Number of pred boxes: {len(all_pred_boxes)}\nNumber of gt boxes: {len(all_true_boxes)}")
+    print(all_pred_boxes[0], all_pred_boxes[1])
+    # map = mean_average_precision(all_true_boxes, all_true_boxes)
+    # print("MAP:",map.item())
+    metrics = compute_metrics(all_pred_boxes, all_true_boxes)
+    print_simple_table(metrics)
+    # print(f"Starting from epoch {start_epoch}")
 
 
-    best_test_loss = float('inf')
+    # best_test_loss = float('inf')
 
-    train_log_file = "training_log.txt"
+    # train_log_file = "training_log.txt"
 
 
-    train_losses, test_loss = [], []
+    # train_losses, test_loss = [], []
 
-    for epoch in range(start_epoch, config.NUM_EPOCHS):
-        mean_loss, mean_box, mean_obj, mean_noobj, mean_class = train_fn(
-            train_loader,
-            model,
-            optimizer,
-            loss_fn,
-            scaler,
-            epoch,
-            scheduler,
-        )
+    # for epoch in range(start_epoch, config.NUM_EPOCHS):
+    #     mean_loss, mean_box, mean_obj, mean_noobj, mean_class = train_fn(
+    #         train_loader,
+    #         model,
+    #         optimizer,
+    #         loss_fn,
+    #         scaler,
+    #         epoch,
+    #         scheduler,
+    #     )
 
-        if config.SAVE_MODEL:
-            save_checkpoint(
-                model,
-                optimizer,
-                scheduler,
-                scaler,
-                epoch,
-                config.CHECKPOINT_FILE
-            )
+    #     if config.SAVE_MODEL:
+    #         save_checkpoint(
+    #             model,
+    #             optimizer,
+    #             scheduler,
+    #             scaler,
+    #             epoch,
+    #             config.CHECKPOINT_FILE
+    #         )
 
-        if epoch + 1 == 12:
-            print("UNFREEZING BACKBONE!")
-            for param in model.backbone.parameters():
-                param.requires_grad = True
+    #     if epoch + 1 == 12:
+    #         print("UNFREEZING BACKBONE!")
+    #         for param in model.backbone.parameters():
+    #             param.requires_grad = True
 
-        if epoch > 0 and (epoch+1) % 3 == 0:
-            val_loss, val_box, val_obj, val_noobj, val_class = eval_fn(
-                test_loader,
-                model,
-                loss_fn,
-            )
-            with open(train_log_file, "a") as f:
-                f.write(f"{epoch+1}, {mean_loss:.4f}, {val_loss:.4f}\n")
+    #     if epoch > 0 and (epoch+1) % 3 == 0:
+    #         val_loss, val_box, val_obj, val_noobj, val_class = eval_fn(
+    #             test_loader,
+    #             model,
+    #             loss_fn,
+    #         )
+    #         with open(train_log_file, "a") as f:
+    #             f.write(f"{epoch+1}, {mean_loss:.4f}, {val_loss:.4f}\n")
 
-            if val_loss < best_test_loss:
-                best_test_loss = val_loss
-                save_model(model, config.BEST_WEIGHTS_FILE)
+    #         if val_loss < best_test_loss:
+    #             best_test_loss = val_loss
+    #             save_model(model, config.BEST_WEIGHTS_FILE)
 
 
 if __name__ == "__main__":

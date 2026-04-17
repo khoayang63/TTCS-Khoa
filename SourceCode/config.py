@@ -20,8 +20,16 @@ TRAIN_2007_SET_PATH = "VOCdevkit/VOC2007_trainval/ImageSets/Main/trainval.txt"
 
 VAL_SET_PATH = "VOCdevkit/VOC2007_test/ImageSets/Main/test.txt"
 
-CHECKPOINT_FILE = "ckpt.pt1"
+CHECKPOINT_FILE = "ckpt.pt"
 BEST_WEIGHTS_FILE = "best_weights1.pt"
+
+
+MAP_CONF_THRESH = 0.01
+INFER_CONF_THRESH = 0.5
+IOU_THRESH = 0.5
+NMS_THRESH = 0.4
+PRE_NMS_TOP_K = 400
+BOXES_PER_IMAGE = 100
 
 
 ANCHORS = [
