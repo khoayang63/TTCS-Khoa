@@ -136,8 +136,11 @@ class YOLOLoss(nn.Module):
         self.mse = nn.MSELoss()
         self.bce = nn.BCEWithLogitsLoss()
         self.entropy = nn.CrossEntropyLoss()
-        self.lambda_box = 5.0
-        self.lambda_noobj = 0.5
+        self.focal = FocalLoss(alpha=0.25, gamma=2.0)
+        self.lambda_box = 2.0
+        self.lambda_obj = 1.0
+        self.lambda_noobj = 5.0
+        self.lambda_class = 1.5
 
         self.anchors = torch.tensor(config.ANCHORS, device = config.DEVICE) # Normalize
         self.S = config.S # [13, 26, 52]
@@ -157,8 +160,8 @@ class YOLOLoss(nn.Module):
             obj = target[..., 0] == 1
             noobj = target[..., 0] == 0
 
-            # noobj loss
-            loss_noobj += self.bce( #ok
+            # noobj loss (Focal Loss để xử lý imbalance positive/negative)
+            loss_noobj += self.focal(
                 pred[..., 0][noobj], target[..., 0][noobj]
             )
             if obj.any():
@@ -217,7 +220,8 @@ class YOLOLoss(nn.Module):
 
         return (self.lambda_box * loss_box + 
                 self.lambda_noobj * loss_noobj + 
-                loss_obj + loss_class), loss_box, loss_obj, loss_noobj, loss_class
+                self.lambda_obj * loss_obj + 
+                self.lambda_class * loss_class), loss_box, loss_obj, loss_noobj, loss_class
         
 
 
