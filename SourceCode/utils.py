@@ -321,7 +321,7 @@ def get_evaluation_bboxes(
             pred_scores = pred_scores[keep]
             pred_labels = pred_labels[keep]
 
-            selected = torch.cat(S
+            selected = torch.cat(
                 [
                     pred_labels.unsqueeze(1),
                     pred_scores.unsqueeze(1),
