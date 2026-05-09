@@ -157,7 +157,8 @@ class YOLODataset(Dataset):
         ]
         boxes = targets['bboxes']
         labels = targets['labels']
-        for box, class_label in zip(boxes, labels):
+        difficult = targets['difficult']
+        for box, class_label, is_difficult in zip(boxes, labels, difficult):
 
             x, y, w, h = box
 
@@ -181,6 +182,13 @@ class YOLODataset(Dataset):
                 j = int(S_scale * x)
 
                 anchor_taken = yolo_targets[scale_idx][anchor_on_scale, i, j, 0]
+
+                if is_difficult == 1:
+                    # Nếu là mẫu khó, ta gán nhãn -1 cho tất cả các anchor liên quan để ignore
+                    if not anchor_taken:
+                        yolo_targets[scale_idx][anchor_on_scale, i, j, 0] = -1
+                    continue
+
 
                 if not anchor_taken and not has_anchor:
 
