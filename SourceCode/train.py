@@ -8,6 +8,7 @@ from tqdm import tqdm
 import warnings
 from utils import *
 from infer import predict_image
+from eval import *
 
 warnings.filterwarnings('ignore')
 
@@ -132,85 +133,6 @@ def train_fn(
 
     return mean_loss, mean_box, mean_obj, mean_noobj, mean_class
 
-@torch.no_grad()
-def eval_fn(
-    val_loader,
-    model,
-    loss_fn,
-):
-    model.eval()
-    print("Evaluating...")
-
-    loop = tqdm(val_loader, leave=True)
-
-    running_loss = 0.0
-    running_box = 0.0
-    running_obj = 0.0
-    running_noobj = 0.0
-    running_class = 0.0
-
-    num_batches = 0
-
-    for batch_idx, (x, targets) in enumerate(loop):
-        x = x.to(config.DEVICE)
-        targets = [t.to(config.DEVICE) for t in targets]
-
-        with torch.cuda.amp.autocast():
-            out = model(x)
-            loss, loss_box, loss_obj, loss_noobj, loss_class = loss_fn(out, targets)
-
-        running_loss += loss.item()
-        running_box += loss_box.item()
-        running_obj += loss_obj.item()
-        running_noobj += loss_noobj.item()
-        running_class += loss_class.item()
-        num_batches += 1
-
-        mean_loss = running_loss / num_batches
-        mean_box = running_box / num_batches
-        mean_obj = running_obj / num_batches
-        mean_noobj = running_noobj / num_batches
-        mean_class = running_class / num_batches
-
-        loop.set_postfix({
-            "loss": f"{mean_loss:.3f}",
-            "box": f"{mean_box:.3f}",
-            "obj": f"{mean_obj:.3f}",
-            "noobj": f"{mean_noobj:.3f}",
-            "cls": f"{mean_class:.3f}",
-        })
-
-    mean_loss = running_loss / num_batches
-    mean_box = running_box / num_batches
-    mean_obj = running_obj / num_batches
-    mean_noobj = running_noobj / num_batches
-    mean_class = running_class / num_batches
-
-    return (
-        mean_loss,
-        mean_box,
-        mean_obj,
-        mean_noobj,
-        mean_class,
-    )
-
-def print_simple_table(metrics):
-    header = f"{'Class':<10} | {'Precision':<10} | {'Recall':<10} | {'F1':<10}"
-    separator = "-" * len(header)
-    
-    print(f"\n[ SUMMARY METRICS ]")
-    print(f"mAP: {metrics['map']:.4f}")
-    print(separator)
-    print(header)
-    print(separator)
-    
-    for class_id, m in metrics['per_class_metric'].items():
-        print(f"{config.PASCAL_CLASSES[class_id]:<10} | {m['precision']:<10.4f} | {m['recall']:<10.4f} | {m['f1']:<10.4f}")
-        
-    print(separator)
-    o = metrics['overall']
-    print(f"{'OVERALL':<10} | {o['precision']:<10.4f} | {o['recall']:<10.4f} | {o['f1']:<10.4f}")
-    print(separator)
 
 
 def main():
@@ -248,21 +170,22 @@ def main():
         )
 
 
-    # all_pred_boxes, all_true_boxes = get_evaluation_bboxes(
-    #     test_loader, model, iou_threshold=config.IOU_THRESH, anchors=config.ANCHORS, threshold=config.MAP_CONF_THRESH
-    # )
-    # print(f"Number of pred boxes: {len(all_pred_boxes)}\nNumber of gt boxes: {len(all_true_boxes)}")
-    # print(all_pred_boxes[0], all_pred_boxes[1])
-    # map = mean_average_precision(all_true_boxes, all_true_boxes)
-    # print("MAP:",map.item())
-    # metrics = compute_metrics(all_pred_boxes, all_true_boxes)
-    # print_simple_table(metrics)
+
     print(f"Starting from epoch {start_epoch}")
 
+    # Tự động unfreeze nếu load checkpoint từ epoch 12 trở đi
+    if start_epoch >= 12:
+        print("Starting from epoch >= 12: UNFREEZING BACKBONE initially!")
+        for param in model.backbone.parameters():
+            param.requires_grad = True
 
+    # if any(not param.requires_grad for param in model.backbone.parameters()):
+    #     print("Backbone is frozen")
+    # else:
+    #     print("Backbone is NOT frozen")
     best_test_loss = float('inf')
 
-    train_log_file = "training_log1.txt"
+    train_log_file = "training_log2.txt"
 
 
     train_losses, test_loss = [], []
@@ -299,13 +222,32 @@ def main():
                 model,
                 loss_fn,
             )
+            
+            # Ghi nhật ký chi tiết tất cả các loại loss
+            if not os.path.exists(train_log_file):
+                with open(train_log_file, "w") as f:
+                    f.write("Epoch,T_Loss,T_Box,T_Obj,T_NoObj,T_Class,V_Loss,V_Box,V_Obj,V_NoObj,V_Class\n")
+            
             with open(train_log_file, "a") as f:
-                f.write(f"{epoch+1}, {mean_loss:.4f}, {val_loss:.4f}\n")
+                f.write(f"{epoch+1},{mean_loss:.4f},{mean_box:.4f},{mean_obj:.4f},{mean_noobj:.4f},{mean_class:.4f},"
+                        f"{val_loss:.4f},{val_box:.4f},{val_obj:.4f},{val_noobj:.4f},{val_class:.4f}\n")
 
             if val_loss < best_test_loss:
                 best_test_loss = val_loss
                 save_model(model, config.BEST_WEIGHTS_FILE)
-
+        
+        if (epoch+1) % 20 == 0:
+            all_pred_boxes, all_true_boxes = get_evaluation_bboxes(
+                test_loader, model, 
+                iou_threshold=config.IOU_THRESH, 
+                anchors=config.ANCHORS, 
+                threshold=config.MAP_CONF_THRESH
+            )
+            print(f"Number of pred boxes: {len(all_pred_boxes)}")
+            print(f"Number of gt boxes: {len(all_true_boxes)}")
+            
+            metrics = compute_metrics(all_pred_boxes, all_true_boxes)
+            print_simple_table(metrics)
 
 if __name__ == "__main__":
     import multiprocessing
