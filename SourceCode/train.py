@@ -137,8 +137,7 @@ def train_fn(
 
 def main():
     model = YOLOv3(num_classes=config.NUM_CLASSES).to(config.DEVICE)
-    total_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)  
-    print(f"Total trainable parameters: {total_trainable_params}")
+
     train_loader, test_loader, _, _ = get_train_test_loader()
 
 
@@ -179,6 +178,8 @@ def main():
         for param in model.backbone.parameters():
             param.requires_grad = True
 
+    total_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)  
+    print(f"Total trainable parameters: {total_trainable_params}")
     # if any(not param.requires_grad for param in model.backbone.parameters()):
     #     print("Backbone is frozen")
     # else:
