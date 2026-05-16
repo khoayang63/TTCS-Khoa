@@ -8,11 +8,22 @@ from loss import YOLOLoss
 import os
 
 @torch.no_grad()
-def eval_fn(val_loader, model, loss_fn):
+def eval_fn(
+    val_loader,
+    model,
+    loss_fn,
+):
     model.eval()
-    print("Evaluating Loss...")
+    print("Evaluating...")
+
     loop = tqdm(val_loader, leave=True)
+
     running_loss = 0.0
+    running_box = 0.0
+    running_obj = 0.0
+    running_noobj = 0.0
+    running_class = 0.0
+
     num_batches = 0
 
     for batch_idx, (x, targets) in enumerate(loop):
@@ -21,14 +32,42 @@ def eval_fn(val_loader, model, loss_fn):
 
         with torch.cuda.amp.autocast():
             out = model(x)
-            # unpack 5 values from loss_fn
-            loss, _, _, _, _ = loss_fn(out, targets)
+            loss, loss_box, loss_obj, loss_noobj, loss_class = loss_fn(out, targets)
 
         running_loss += loss.item()
+        running_box += loss_box.item()
+        running_obj += loss_obj.item()
+        running_noobj += loss_noobj.item()
+        running_class += loss_class.item()
         num_batches += 1
-        loop.set_postfix({"loss": f"{running_loss/num_batches:.3f}"})
 
-    return running_loss / num_batches
+        mean_loss = running_loss / num_batches
+        mean_box = running_box / num_batches
+        mean_obj = running_obj / num_batches
+        mean_noobj = running_noobj / num_batches
+        mean_class = running_class / num_batches
+
+        loop.set_postfix({
+            "loss": f"{mean_loss:.3f}",
+            "box": f"{mean_box:.3f}",
+            "obj": f"{mean_obj:.3f}",
+            "noobj": f"{mean_noobj:.3f}",
+            "cls": f"{mean_class:.3f}",
+        })
+
+    mean_loss = running_loss / num_batches
+    mean_box = running_box / num_batches
+    mean_obj = running_obj / num_batches
+    mean_noobj = running_noobj / num_batches
+    mean_class = running_class / num_batches
+
+    return (
+        mean_loss,
+        mean_box,
+        mean_obj,
+        mean_noobj,
+        mean_class,
+    )
 
 def print_simple_table(metrics):
     header = f"{'Class':<15} | {'Precision':<10} | {'Recall':<10} | {'F1':<10}"
@@ -53,7 +92,7 @@ def main():
     model = YOLOv3(num_classes=config.NUM_CLASSES).to(config.DEVICE)
     
     # Priority: BEST_WEIGHTS_FILE > CHECKPOINT_FILE
-    weight_path = config.BEST_WEIGHTS_FILE if os.path.exists(config.BEST_WEIGHTS_FILE) else config.CHECKPOINT_FILE
+    weight_path = config.CHECKPOINT_FILE
     
     if os.path.exists(weight_path):
         print(f"Loading weights from {weight_path}...")
