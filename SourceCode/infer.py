@@ -159,7 +159,7 @@ def draw_professional_box(image, x1, y1, x2, y2, label_text, color, font_scale=0
     cv2.putText(image, label_text, (x1 + 5, txt_box_y1 + text_h + 3), font, 
                 font_scale, (255, 255, 255), font_thickness, lineType=cv2.LINE_AA)
 
-def predict_image(image_path, model, device="cuda", threshold=0.6, iou_threshold=0.4):
+def predict_image(image_path, model, device="cuda", threshold=0.5, iou_threshold=0.4):
     model.eval()
     
     # 1. Đọc ảnh và tìm file XML tương ứng
@@ -222,8 +222,22 @@ def predict_image(image_path, model, device="cuda", threshold=0.6, iou_threshold
 def main():
     pth = "VOCdevkit/VOC2007_test/JPEGImages"
 
-    model = YOLOv3(num_classes=20).to(config.DEVICE)
-    model.load_state_dict(torch.load('weights/best_weights1.pt'))
+    print(f"Using device: {config.DEVICE}")
+    model = YOLOv3(num_classes=config.NUM_CLASSES).to(config.DEVICE)
+    
+    # Priority: BEST_WEIGHTS_FILE > CHECKPOINT_FILE
+    weight_path = config.CHECKPOINT_FILE
+    
+    if os.path.exists(weight_path):
+        print(f"Loading weights from {weight_path}...")
+        checkpoint = torch.load(weight_path, map_location=config.DEVICE)
+        if isinstance(checkpoint, dict) and "model" in checkpoint:
+            model.load_state_dict(checkpoint["model"])
+        else:
+            model.load_state_dict(checkpoint)
+    else:
+        print("No weights found. Evaluating random model.")
+
     
     for img_name in random.sample(os.listdir(pth), k=20):  # Chọn ngẫu nhiên 20 ảnh để dự đoán
         img_path = os.path.join(pth, img_name)
